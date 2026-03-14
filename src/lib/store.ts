@@ -7,6 +7,7 @@ import type {
     AcuityLevel,
     EDirection,
     TestResult,
+    OptotypeType,
 } from "./types";
 import { ACUITY_LEVELS } from "./constants";
 
@@ -28,6 +29,10 @@ interface AppState {
     setFocalLengthPx: (v: number) => void;
     isMobile: boolean;
     setIsMobile: (v: boolean) => void;
+
+    // Optotype type
+    optotypeType: OptotypeType;
+    setOptotypeType: (t: OptotypeType) => void;
 
     // Distance
     distance: number; // meters, filtered
@@ -77,6 +82,9 @@ export const useAppStore = create<AppState>((set) => ({
     setFocalLengthPx: (focalLengthPx) => set({ focalLengthPx }),
     isMobile: false,
     setIsMobile: (isMobile) => set({ isMobile }),
+
+    optotypeType: "tumbling-e",
+    setOptotypeType: (optotypeType) => set({ optotypeType }),
 
     distance: 0,
     rawDistance: 0,

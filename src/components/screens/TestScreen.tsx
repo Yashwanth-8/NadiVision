@@ -14,7 +14,7 @@ import {
 } from "@/lib/distance";
 import {
     optotypeHeightPx,
-    randomDirection,
+    smartRandomDirection,
     directionToRotation,
 } from "@/lib/optotype";
 import {
@@ -23,6 +23,7 @@ import {
     STABILITY_LOCK_DURATION_S,
     MIN_CORRECT_TO_ADVANCE,
     MAX_WRONG_TO_TERMINATE,
+    LOGMAR_CEILING,
 } from "@/lib/constants";
 import type { StabilityState, EDirection, TestResponse, TestResult, CheatFlag } from "@/lib/types";
 
@@ -52,6 +53,7 @@ export default function TestScreen() {
         setDistance,
     } = store;
     const isMobile = useAppStore((s) => s.isMobile);
+    const optotypeType = useAppStore((s) => s.optotypeType);
 
     const videoRef = useRef<HTMLVideoElement>(null);
     const canvasRef = useRef<HTMLCanvasElement>(null);
@@ -80,8 +82,40 @@ export default function TestScreen() {
 
     // Gyro state
     const [gyroAvailable, setGyroAvailable] = useState(false);
+    const [gyroPermissionRequested, setGyroPermissionRequested] = useState(false);
     const lastGyroRef = useRef({ alpha: 0, beta: 0, gamma: 0 });
     const gyroAnchorRef = useRef({ alpha: 0, beta: 0, gamma: 0 });
+
+    // Request gyro permission on mobile
+    useEffect(() => {
+        if (!isMobile) return;
+        // iOS 13+ requires explicit permission
+        if (typeof DeviceOrientationEvent !== 'undefined' &&
+            typeof (DeviceOrientationEvent as any).requestPermission === 'function') {
+            // Wait for user interaction
+            setGyroPermissionRequested(false);
+        } else {
+            // Android or desktop: permission not required
+            setGyroPermissionRequested(true);
+        }
+    }, [isMobile]);
+
+    // Handler for requesting permission
+    const requestGyroPermission = async () => {
+        if (typeof DeviceOrientationEvent !== 'undefined' &&
+            typeof (DeviceOrientationEvent as any).requestPermission === 'function') {
+            try {
+                const response = await (DeviceOrientationEvent as any).requestPermission();
+                if (response === 'granted') {
+                    setGyroPermissionRequested(true);
+                }
+            } catch (err) {
+                alert('Gyroscope permission denied.');
+            }
+        } else {
+            setGyroPermissionRequested(true);
+        }
+    };
 
     const currentLevel = ACUITY_LEVELS[currentLevelIndex];
     const mmPerPx = calibration?.mmPerPx ?? 0.25; // fallback
@@ -89,7 +123,7 @@ export default function TestScreen() {
     // Initialize test
     useEffect(() => {
         setTestStartTime(Date.now());
-        setCurrentDirection(randomDirection());
+        setCurrentDirection(smartRandomDirection());
     }, [setTestStartTime, setCurrentDirection]);
 
     // WakeLock: keep screen on during test
@@ -260,8 +294,9 @@ export default function TestScreen() {
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, []);
 
-    // Gyroscope listener
+    // Gyroscope listener (only after permission)
     useEffect(() => {
+        if (!gyroPermissionRequested) return;
         const handleOrientation = (e: DeviceOrientationEvent) => {
             if (e.alpha !== null) {
                 setGyroAvailable(true);
@@ -275,7 +310,7 @@ export default function TestScreen() {
 
         window.addEventListener("deviceorientation", handleOrientation);
         return () => window.removeEventListener("deviceorientation", handleOrientation);
-    }, []);
+    }, [gyroPermissionRequested]);
 
     // Stability guard FSM.
     //
@@ -430,7 +465,7 @@ export default function TestScreen() {
                     } else {
                         setCurrentLevel(nextLevel);
                         setCurrentTrial(0);
-                        setCurrentDirection(randomDirection());
+                        setCurrentDirection(smartRandomDirection(currentDirection));
                     }
                 } else {
                     // Failed this level — test complete at previous level
@@ -442,7 +477,7 @@ export default function TestScreen() {
             } else {
                 // Next trial in same level
                 setCurrentTrial(nextTrial);
-                setCurrentDirection(randomDirection());
+                setCurrentDirection(smartRandomDirection(currentDirection));
             }
         },
         [
@@ -462,7 +497,7 @@ export default function TestScreen() {
             };
         }).filter((s) => s.total > 0);
 
-        // Best acuity = lowest logMAR with >= 3/5 correct
+        // Best acuity = lowest logMAR with >= MIN_CORRECT_TO_ADVANCE correct
         let bestLevel = ACUITY_LEVELS[0]; // default 20/200
         for (const score of perLevelScores) {
             if (score.correct >= MIN_CORRECT_TO_ADVANCE) {
@@ -470,9 +505,34 @@ export default function TestScreen() {
             }
         }
 
+        // Fractional LogMAR — letter-by-letter scoring (ETDRS-style)
+        // Each correct trial earns credit proportional to the LogMAR gap at that level
+        let totalCredit = 0;
+        let varianceSum = 0;
+        for (const score of perLevelScores) {
+            const levelIdx = ACUITY_LEVELS.findIndex(l => l.logMAR === score.level.logMAR);
+            const levelGap = levelIdx === 0
+                ? LOGMAR_CEILING - ACUITY_LEVELS[0].logMAR
+                : ACUITY_LEVELS[levelIdx - 1].logMAR - ACUITY_LEVELS[levelIdx].logMAR;
+            const creditPerTrial = levelGap / score.level.trialsPerLevel;
+            totalCredit += score.correct * creditPerTrial;
+            // Binomial variance for 95% CI
+            const p = score.total > 0 ? score.correct / score.total : 0;
+            varianceSum += score.total * creditPerTrial * creditPerTrial * p * (1 - p);
+        }
+        const fractionalLogMAR = Math.round((LOGMAR_CEILING - totalCredit) * 1000) / 1000;
+        const se = Math.sqrt(varianceSum);
+        const ciHalfWidth = 1.96 * se;
+
         const result: TestResult = {
             acuitySnellen: bestLevel.snellen,
             acuityLogMAR: bestLevel.logMAR,
+            fractionalLogMAR,
+            confidenceInterval: {
+                lower: Math.round((fractionalLogMAR - ciHalfWidth) * 1000) / 1000,
+                upper: Math.round((fractionalLogMAR + ciHalfWidth) * 1000) / 1000,
+                confidence: 0.95,
+            },
             responses: allResponses,
             testDistance: lockedDistance,
             testDuration: Date.now() - testStartTime,
@@ -500,8 +560,94 @@ export default function TestScreen() {
     const eRotation = directionToRotation(currentDirection);
     const eStrokeWidth = eHeightPx / 5;
 
+    // Movement/tilt detection for instant lock/blur
+    const [movementLocked, setMovementLocked] = useState(false);
+    const movementAnchorRef = useRef<number | null>(null);
+    const tiltAnchorRef = useRef<{ alpha: number, beta: number, gamma: number } | null>(null);
+
+    // Monitor distance and gyro for movement
+    useEffect(() => {
+        if (!gyroAvailable || !gyroPermissionRequested) return;
+        // Set anchors on first unlock
+        if (stability === "UNLOCKED" && movementAnchorRef.current === null) {
+            movementAnchorRef.current = currentFilteredDist;
+            tiltAnchorRef.current = { ...lastGyroRef.current };
+        }
+        // Only check when unlocked
+        if (stability === "UNLOCKED" && movementAnchorRef.current !== null && tiltAnchorRef.current !== null) {
+            // Distance check
+            const distDrift = Math.abs(currentFilteredDist - movementAnchorRef.current) * 100; // cm
+            // Tilt check (change in beta/gamma > threshold)
+            const tiltDrift = Math.abs(lastGyroRef.current.beta - tiltAnchorRef.current.beta) + Math.abs(lastGyroRef.current.gamma - tiltAnchorRef.current.gamma);
+            if (distDrift > 5 || tiltDrift > 15) {
+                setMovementLocked(true);
+            } else {
+                setMovementLocked(false); // Resume when user returns to original position
+            }
+        }
+        // Reset lock if stability changes
+        if (stability !== "UNLOCKED") {
+            setMovementLocked(false);
+            movementAnchorRef.current = null;
+            tiltAnchorRef.current = null;
+        }
+    }, [currentFilteredDist, stability, gyroAvailable, gyroPermissionRequested]);
+
+    // Multiple faces lock state
+    const [multiFaceLock, setMultiFaceLock] = useState(false);
+
+    // Update multiFaceLock based on face detection
+    useEffect(() => {
+        // This will be updated by the faceMesh results callback
+        // The multiFaceFlaggedRef tracks this in the camera effect
+        const interval = setInterval(() => {
+            setMultiFaceLock(multiFaceFlaggedRef.current);
+        }, 100);
+        return () => clearInterval(interval);
+    }, []);
+
     return (
         <div className="relative min-h-screen flex flex-col" tabIndex={0}>
+            {/* Multiple faces lock overlay */}
+            {multiFaceLock && (
+                <div className="absolute inset-0 z-50" style={{ backdropFilter: 'blur(20px)', WebkitBackdropFilter: 'blur(20px)', background: 'rgba(0,0,0,0.3)' }}>
+                    <div className="flex flex-col items-center justify-center h-full">
+                        <div className="glass rounded-3xl px-10 py-10 text-center max-w-xs w-full">
+                            <h3 className="text-xl font-bold text-danger mb-2">Multiple Faces Detected</h3>
+                            <p className="text-lg text-danger font-mono font-bold mb-2">Test Locked</p>
+                            <p className="text-xs text-text-secondary">Only one person should be in front of the camera to continue.</p>
+                        </div>
+                    </div>
+                </div>
+            )}
+            {/* Movement lock/blur overlay */}
+            {movementLocked && (
+                <div className="absolute inset-0 z-50" style={{ backdropFilter: 'blur(20px)', WebkitBackdropFilter: 'blur(20px)', background: 'rgba(0,0,0,0.3)' }}>
+                    <div className="flex flex-col items-center justify-center h-full">
+                        <div className="glass rounded-3xl px-10 py-10 text-center max-w-xs w-full">
+                            <h3 className="text-xl font-bold text-text-primary mb-2">Please Hold Still</h3>
+                            <p className="text-lg text-primary font-mono font-bold mb-2">Movement detected</p>
+                            <p className="text-xs text-text-secondary">Return to your original position to continue</p>
+                        </div>
+                    </div>
+                </div>
+            )}
+            {/* Gyro permission button for mobile */}
+            {isMobile && !gyroPermissionRequested && (
+                <div style={{ position: 'absolute', top: 10, left: 10, zIndex: 1000 }}>
+                    <button style={{ padding: '10px', borderRadius: '8px', background: '#222', color: '#fff', fontSize: '16px' }} onClick={requestGyroPermission}>
+                        Enable Gyroscope
+                    </button>
+                </div>
+            )}
+            {/* Gyro debug overlay */}
+            {gyroAvailable && (
+                <div style={{ position: 'absolute', top: 10, right: 10, zIndex: 1000, background: 'rgba(0,0,0,0.5)', color: '#0ff', padding: '8px', borderRadius: '8px', fontSize: '12px' }}>
+                    <div>Gyro α: {lastGyroRef.current.alpha.toFixed(1)}</div>
+                    <div>Gyro β: {lastGyroRef.current.beta.toFixed(1)}</div>
+                    <div>Gyro γ: {lastGyroRef.current.gamma.toFixed(1)}</div>
+                </div>
+            )}
             {/* Top bar */}
             <div className="flex items-center justify-between px-6 py-4 border-b border-white/5">
                 <div className="flex items-center gap-4">
@@ -543,7 +689,7 @@ export default function TestScreen() {
                         transition={{ duration: 0.2 }}
                         className="relative"
                     >
-                        {/* The E rendered via SVG for pixel-perfect sizing */}
+                        {/* Optotype rendered via SVG for pixel-perfect sizing */}
                         <svg
                             width={eHeightPx}
                             height={eHeightPx}
@@ -553,17 +699,21 @@ export default function TestScreen() {
                                 transition: "transform 0.2s ease",
                             }}
                         >
-                            {/* Tumbling E facing RIGHT: 5×5 grid
-                  ■ ■ ■ ■ ■
-                  ■ □ □ □ □
-                  ■ ■ ■ ■ ■
-                  ■ □ □ □ □
-                  ■ ■ ■ ■ ■
-              */}
-                            <rect x="0" y="0" width="5" height="1" fill="currentColor" />
-                            <rect x="0" y="0" width="1" height="5" fill="currentColor" />
-                            <rect x="0" y="2" width="5" height="1" fill="currentColor" />
-                            <rect x="0" y="4" width="5" height="1" fill="currentColor" />
+                            {optotypeType === "landolt-c" ? (
+                                /* Landolt C: ring with gap facing RIGHT */
+                                <path
+                                    d="M 4.95 2 A 2.5 2.5 0 1 0 4.95 3 L 3.91 3 A 1.5 1.5 0 1 1 3.91 2 Z"
+                                    fill="currentColor"
+                                />
+                            ) : (
+                                /* Tumbling E facing RIGHT: 5×5 grid */
+                                <>
+                                    <rect x="0" y="0" width="5" height="1" fill="currentColor" />
+                                    <rect x="0" y="0" width="1" height="5" fill="currentColor" />
+                                    <rect x="0" y="2" width="5" height="1" fill="currentColor" />
+                                    <rect x="0" y="4" width="5" height="1" fill="currentColor" />
+                                </>
+                            )}
                         </svg>
                     </motion.div>
                 </AnimatePresence>

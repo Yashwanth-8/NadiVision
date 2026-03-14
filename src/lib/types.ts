@@ -12,6 +12,7 @@ export type AppScreen =
 export type StabilityState = "LOCKED" | "STABILIZING" | "UNLOCKED";
 
 export type EDirection = "up" | "down" | "left" | "right";
+export type OptotypeType = "tumbling-e" | "landolt-c";
 
 export interface CheatFlag {
     type: "fullscreen_exit" | "tab_switch" | "face_lost" | "multiple_faces" | "fast_answer" | "distance_jump";
@@ -40,6 +41,8 @@ export interface TestResponse {
 export interface TestResult {
     acuitySnellen: string;
     acuityLogMAR: number;
+    fractionalLogMAR: number;
+    confidenceInterval: { lower: number; upper: number; confidence: number };
     responses: TestResponse[];
     testDistance: number;
     testDuration: number; // ms

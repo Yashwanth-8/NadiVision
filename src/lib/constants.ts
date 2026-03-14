@@ -26,9 +26,12 @@ export const IRIS_DIAMETER_MM = 11.7;
 export const AVG_FACE_WIDTH_MM = 140;
 
 // Min correct per level to advance
-export const MIN_CORRECT_TO_ADVANCE = 3; // out of 5
+export const MIN_CORRECT_TO_ADVANCE = 3; // out of 5 (ETDRS standard)
 // Max wrong per level to terminate
 export const MAX_WRONG_TO_TERMINATE = 3; // out of 5
+
+// Ceiling LogMAR for fractional scoring (represents "can't see worst line")
+export const LOGMAR_CEILING = 1.3;
 
 // Directions for the Tumbling E
 export const DIRECTIONS: ("up" | "down" | "left" | "right")[] = [

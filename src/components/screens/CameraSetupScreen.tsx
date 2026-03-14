@@ -160,6 +160,7 @@ export default function CameraSetupScreen() {
 
         return () => {
             cancelled = true;
+            initRef.current = false; // allow re-init on remount ("Test Again")
             cancelAnimationFrame(animFrameRef.current);
             if (streamRef.current) {
                 streamRef.current.getTracks().forEach((t) => t.stop());
@@ -224,6 +225,12 @@ export default function CameraSetupScreen() {
     }, []);
 
     const handleStartTest = () => {
+        // Stop camera before navigating — avoids dual-stream conflict with TestScreen
+        cancelAnimationFrame(animFrameRef.current);
+        if (streamRef.current) {
+            streamRef.current.getTracks().forEach((t) => t.stop());
+            streamRef.current = null;
+        }
         setScreen("test");
     };
 

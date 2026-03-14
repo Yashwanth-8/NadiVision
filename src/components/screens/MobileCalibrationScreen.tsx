@@ -135,6 +135,7 @@ export default function MobileCalibrationScreen() {
 
         return () => {
             cancelled = true;
+            initRef.current = false; // allow re-init on remount
             cancelAnimationFrame(animFrameRef.current);
             streamRef.current?.getTracks().forEach((t) => t.stop());
         };

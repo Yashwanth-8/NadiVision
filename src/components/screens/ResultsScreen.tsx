@@ -18,7 +18,7 @@ export default function ResultsScreen() {
         if (!testResult) return;
 
         // Animate LogMAR counter
-        const target = testResult.acuityLogMAR;
+        const target = testResult.fractionalLogMAR;
         const duration = 1500;
         const start = Date.now();
         const startVal = 1.0;
@@ -91,7 +91,8 @@ export default function ResultsScreen() {
             doc.setFontSize(18);
             doc.setTextColor(0, 0, 0);
             doc.text(`Visual Acuity: ${testResult.acuitySnellen}`, 20, 75);
-            doc.text(`LogMAR: ${testResult.acuityLogMAR.toFixed(1)}`, 20, 85);
+            doc.text(`LogMAR: ${testResult.fractionalLogMAR.toFixed(2)} (fractional, letter-by-letter)`, 20, 85);
+            doc.text(`95% CI: ${testResult.confidenceInterval.lower.toFixed(2)} – ${testResult.confidenceInterval.upper.toFixed(2)} LogMAR`, 20, 93);
 
             doc.setFontSize(14);
             doc.text("Per-Line Results:", 20, 105);
@@ -170,7 +171,11 @@ export default function ResultsScreen() {
                             {testResult.acuitySnellen}
                         </motion.p>
                         <p className="text-lg font-mono text-text-secondary mt-1">
-                            LogMAR: {animatedLogMAR.toFixed(1)}
+                            LogMAR: {animatedLogMAR.toFixed(2)}
+                        </p>
+                        <p className="text-xs text-text-muted mt-2 max-w-xs leading-relaxed">
+                            95% CI: {testResult.confidenceInterval.lower.toFixed(2)} – {testResult.confidenceInterval.upper.toFixed(2)} LogMAR
+                            &nbsp;·&nbsp;± {((testResult.confidenceInterval.upper - testResult.fractionalLogMAR) / 0.1).toFixed(1)} lines
                         </p>
                     </div>
 

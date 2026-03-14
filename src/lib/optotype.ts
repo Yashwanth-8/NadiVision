@@ -44,6 +44,15 @@ export function randomDirection(): EDirection {
 }
 
 /**
+ * Pick a random direction, avoiding consecutive repeats for better test validity.
+ */
+export function smartRandomDirection(lastDirection?: EDirection): EDirection {
+    const dirs: EDirection[] = ["up", "down", "left", "right"];
+    const available = lastDirection ? dirs.filter(d => d !== lastDirection) : dirs;
+    return available[Math.floor(Math.random() * available.length)];
+}
+
+/**
  * Rotation angle (degrees) for the Tumbling E based on its facing direction.
  * The base E faces RIGHT.
  */
