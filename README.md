@@ -1,4 +1,6 @@
 # 👁️ Nadi Vision
+** Team Name : Team Nexus
+** Team Members : Nagaraja M, Kaushik G and K Srinivas Yashwanth
 
 **A medical-grade, camera-based visual acuity testing system with advanced cheating prevention**
 
